@@ -32,7 +32,7 @@ jobs:
       - name: build
         run: | 
           mkdir -p buildx
-          go build -o buildx/build -trimpath -ldflags "-s -w -buildid=" ./main
+          CGO_ENABLED=0 go build -o buildx/build -trimpath -ldflags "-s -w -buildid=" ./main
           pushd buildx || exit 1
           zip -9vr ../build.zip .
           popd || exit 1
