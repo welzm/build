@@ -1,0 +1,65 @@
+on:
+  schedule:
+    - cron:  '0 7 * * *'
+  workflow_dispatch:
+
+name: build
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps: 
+      - name: get-version
+        id: get_version
+        run: |
+          git clone https://${GITHUB_ACTOR}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ secrets.SOURCE_REPOSITORY }}.git tmp
+          cd tmp
+          echo "VER=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
+          rm -rf ../tmp
+      - name: checkout
+        uses: actions/checkout@v3
+        with:
+         repository: ${{ secrets.SOURCE_REPOSITORY }}
+      - name: go-version
+        id: go_version
+        run: |
+          GOVER="$(curl -sLf 'https://golang.org/VERSION?m=text')"
+          echo "GO_VERSION=${GOVER#go}" >> $GITHUB_ENV
+      - name: setup-go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '${{ env.GO_VERSION }}'
+          check-latest: true
+      - name: build
+        run: | 
+          mkdir -p buildx
+          go build -o buildx/build -trimpath -ldflags "-s -w -buildid=" ./main
+          pushd buildx || exit 1
+          zip -9vr ../build.zip .
+          popd || exit 1
+      - name: Install minisign and sign
+        run: |
+          sudo apt-get -y install libsodium-dev
+          git clone --depth 1 https://github.com/jedisct1/minisign.git
+          cd minisign/src
+          mkdir -p /tmp/bin
+          cc -O2 -o /tmp/bin/minisign -D_GNU_SOURCE *.c -lsodium
+          cd -
+          /tmp/bin/minisign -v
+          echo "${{ secrets.MINISIGN_SK }}" >> /tmp/minisign.key
+          echo | /tmp/bin/minisign -s /tmp/minisign.key -Sm *.zip
+          mv buildx build
+      - name: Upload files to Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build
+          path: |
+            ./build/*
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./build.zip*
+          tag: ${{ steps.get_version.outputs.VER }}
+          overwrite: true
+          file_glob: true
+
